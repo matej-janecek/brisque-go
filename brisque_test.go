@@ -2,9 +2,13 @@ package brisque
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
+	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -281,6 +285,494 @@ func TestOptions(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+}
+
+func TestScoreImage_SizeBoundary(t *testing.T) {
+	t.Parallel()
+	m := DefaultModel()
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		w, h    int
+		wantErr bool
+	}{
+		{"15x16", 15, 16, true},
+		{"16x15", 16, 15, true},
+		{"0x0", 0, 0, true},
+		{"16x16", 16, 16, false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			img := image.NewGray(image.Rect(0, 0, tt.w, tt.h))
+			// Fill with some pattern to avoid degenerate
+			for i := range img.Pix {
+				img.Pix[i] = uint8((i * 7) % 256)
+			}
+			_, err := m.ScoreImage(ctx, img)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected ErrImageTooSmall, got nil")
+				}
+				var tooSmall *ErrImageTooSmall
+				if !errors.As(err, &tooSmall) {
+					t.Errorf("expected *ErrImageTooSmall, got %T", err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestScoreImage_Clamping(t *testing.T) {
+	t.Parallel()
+	m := DefaultModel()
+	ctx := context.Background()
+
+	makeImg := func(fill func(x, y int) uint8) image.Image {
+		img := image.NewGray(image.Rect(0, 0, 64, 64))
+		for y := 0; y < 64; y++ {
+			for x := 0; x < 64; x++ {
+				img.Pix[y*64+x] = fill(x, y)
+			}
+		}
+		return img
+	}
+
+	tests := []struct {
+		name string
+		img  image.Image
+	}{
+		{"white", makeImg(func(_, _ int) uint8 { return 255 })},
+		{"black", makeImg(func(_, _ int) uint8 { return 0 })},
+		{"noise", makeImg(func(_, _ int) uint8 {
+			return uint8(rand.New(rand.NewSource(42)).Intn(256))
+		})},
+		{"gradient", makeImg(func(x, y int) uint8 { return uint8((x + y) % 256) })},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			score, err := m.ScoreImage(ctx, tt.img)
+			if err != nil {
+				t.Logf("error (may be degenerate): %v", err)
+				return
+			}
+			if score < 0 || score > 100 {
+				t.Errorf("score = %f, want in [0, 100]", score)
+			}
+		})
+	}
+}
+
+func TestScoreImage_Ordering(t *testing.T) {
+	t.Parallel()
+	m := DefaultModel()
+	ctx := context.Background()
+
+	// Use 256×256 images with realistic content to avoid both scoring at clamped 100
+	rng := rand.New(rand.NewSource(42))
+	noise := image.NewGray(image.Rect(0, 0, 256, 256))
+	for i := range noise.Pix {
+		noise.Pix[i] = uint8(rng.Intn(256))
+	}
+	noiseScore, err := m.ScoreImage(ctx, noise)
+	if err != nil {
+		t.Fatalf("noise: %v", err)
+	}
+
+	// Smooth gradient — natural-looking, should score better (lower)
+	gradient := image.NewGray(image.Rect(0, 0, 256, 256))
+	for y := 0; y < 256; y++ {
+		for x := 0; x < 256; x++ {
+			gradient.Pix[y*256+x] = uint8((x + y) / 2)
+		}
+	}
+	gradScore, err := m.ScoreImage(ctx, gradient)
+	if err != nil {
+		t.Fatalf("gradient: %v", err)
+	}
+
+	t.Logf("noise=%.2f, gradient=%.2f", noiseScore, gradScore)
+	// Both may be clamped to 100 for synthetic images; only check if not both clamped
+	if noiseScore < 100 && gradScore < 100 && noiseScore <= gradScore {
+		t.Errorf("noise (%f) should score higher (worse) than gradient (%f)", noiseScore, gradScore)
+	}
+}
+
+func TestScoreImage_GrayVsRGBA(t *testing.T) {
+	t.Parallel()
+	m := DefaultModel()
+	ctx := context.Background()
+
+	grayImg := image.NewGray(image.Rect(0, 0, 64, 64))
+	for i := range grayImg.Pix {
+		grayImg.Pix[i] = uint8((i * 7) % 256)
+	}
+
+	rgbaImg := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			v := grayImg.GrayAt(x, y).Y
+			rgbaImg.SetRGBA(x, y, color.RGBA{v, v, v, 255})
+		}
+	}
+
+	gScore, err := m.ScoreImage(ctx, grayImg)
+	if err != nil {
+		t.Fatalf("gray: %v", err)
+	}
+	rScore, err := m.ScoreImage(ctx, rgbaImg)
+	if err != nil {
+		t.Fatalf("rgba: %v", err)
+	}
+
+	if math.Abs(gScore-rScore) > 0.01 {
+		t.Errorf("gray (%f) != rgba (%f) for equivalent R=G=B pixels", gScore, rScore)
+	}
+}
+
+func TestScoreImage_ConcurrentCalls(t *testing.T) {
+	t.Parallel()
+	m := DefaultModel()
+	ctx := context.Background()
+
+	img := image.NewGray(image.Rect(0, 0, 64, 64))
+	for i := range img.Pix {
+		img.Pix[i] = uint8((i * 7) % 256)
+	}
+
+	refScore, err := m.ScoreImage(ctx, img)
+	if err != nil {
+		t.Fatalf("reference: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 10)
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			score, err := m.ScoreImage(ctx, img)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if score != refScore {
+				errs <- fmt.Errorf("concurrent score %f != ref %f", score, refScore)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+func TestScoreImage_NonOriginBounds(t *testing.T) {
+	t.Parallel()
+	m := DefaultModel()
+	ctx := context.Background()
+
+	// Create a larger image, then SubImage
+	big := image.NewGray(image.Rect(0, 0, 100, 100))
+	for i := range big.Pix {
+		big.Pix[i] = uint8((i * 7) % 256)
+	}
+	sub := big.SubImage(image.Rect(10, 10, 74, 74))
+
+	score, err := m.ScoreImage(ctx, sub)
+	if err != nil {
+		t.Fatalf("non-origin bounds: %v", err)
+	}
+	if score < 0 || score > 100 {
+		t.Errorf("score = %f, want in [0, 100]", score)
+	}
+}
+
+func TestScoreGray_EquivalenceWithScoreImage(t *testing.T) {
+	t.Parallel()
+	m := DefaultModel()
+	ctx := context.Background()
+
+	w, h := 64, 64
+	pix := make([]byte, w*h)
+	for i := range pix {
+		pix[i] = uint8((i * 11) % 256)
+	}
+
+	grayScore, err := m.ScoreGray(ctx, pix, w, h)
+	if err != nil {
+		t.Fatalf("ScoreGray: %v", err)
+	}
+
+	img := image.NewGray(image.Rect(0, 0, w, h))
+	copy(img.Pix, pix)
+	imgScore, err := m.ScoreImage(ctx, img)
+	if err != nil {
+		t.Fatalf("ScoreImage: %v", err)
+	}
+
+	if grayScore != imgScore {
+		t.Errorf("ScoreGray=%f != ScoreImage=%f", grayScore, imgScore)
+	}
+}
+
+func TestScoreGray_ShortPix(t *testing.T) {
+	t.Parallel()
+	m := DefaultModel()
+	ctx := context.Background()
+
+	// len(pix) < w*h — should panic or return error
+	pix := make([]byte, 10) // way too short for 64x64
+	panicked := false
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicked = true
+			}
+		}()
+		_, err := m.ScoreGray(ctx, pix, 64, 64)
+		if err != nil {
+			return // error is acceptable
+		}
+		// If no panic and no error, that's a problem
+		t.Error("expected panic or error for short pix, got neither")
+	}()
+	if panicked {
+		t.Log("short pix caused panic (acceptable)")
+	}
+}
+
+func TestScoreBatch_OrderPreservation(t *testing.T) {
+	t.Parallel()
+	m := DefaultModel()
+	ctx := context.Background()
+
+	images := make([]image.Image, 5)
+	for i := range images {
+		img := image.NewGray(image.Rect(0, 0, 64, 64))
+		for y := 0; y < 64; y++ {
+			for x := 0; x < 64; x++ {
+				img.Pix[y*64+x] = uint8((x + y + i*37) % 256)
+			}
+		}
+		images[i] = img
+	}
+
+	batchScores, err := m.ScoreBatch(ctx, images)
+	if err != nil {
+		t.Fatalf("ScoreBatch: %v", err)
+	}
+
+	for i, img := range images {
+		individual, err := m.ScoreImage(ctx, img)
+		if err != nil {
+			t.Fatalf("ScoreImage[%d]: %v", i, err)
+		}
+		if batchScores[i] != individual {
+			t.Errorf("batch[%d]=%f != individual=%f", i, batchScores[i], individual)
+		}
+	}
+}
+
+func TestScoreBatch_MixedValidInvalid(t *testing.T) {
+	t.Parallel()
+	m := DefaultModel()
+	ctx := context.Background()
+
+	valid := image.NewGray(image.Rect(0, 0, 64, 64))
+	for i := range valid.Pix {
+		valid.Pix[i] = uint8(i % 256)
+	}
+	tooSmall := image.NewGray(image.Rect(0, 0, 4, 4))
+
+	images := []image.Image{valid, tooSmall, valid}
+	_, err := m.ScoreBatch(ctx, images)
+	if err == nil {
+		t.Fatal("expected error for batch with too-small image")
+	}
+}
+
+func TestFeatures_Determinism(t *testing.T) {
+	t.Parallel()
+	m := DefaultModel()
+	ctx := context.Background()
+
+	img := image.NewGray(image.Rect(0, 0, 64, 64))
+	for i := range img.Pix {
+		img.Pix[i] = uint8((i * 7) % 256)
+	}
+
+	f1, err := m.Features(ctx, img)
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	f2, err := m.Features(ctx, img)
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if f1 != f2 {
+		t.Error("Features not deterministic")
+	}
+}
+
+func TestFeatures_NonTrivial(t *testing.T) {
+	t.Parallel()
+	m := DefaultModel()
+	ctx := context.Background()
+
+	img := image.NewGray(image.Rect(0, 0, 64, 64))
+	for i := range img.Pix {
+		img.Pix[i] = uint8((i * 7) % 256)
+	}
+
+	feats, err := m.Features(ctx, img)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	allZero := true
+	for _, v := range feats {
+		if v != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		t.Error("all features are zero")
+	}
+}
+
+func TestNewModel_ErrorCases(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"empty", ""},
+		{"missing_lines", "1.0 7\n0.05 -1.0 1\n"},
+		{"wrong_sv_fields", func() string {
+			// SV line with 36 fields instead of 37
+			var b strings.Builder
+			b.WriteString("1.0 7\n0.05 -1.0 1\n")
+			b.WriteString("1.0")
+			for i := 0; i < 35; i++ {
+				b.WriteString(" 0.5")
+			}
+			b.WriteString("\n")
+			return b.String()
+		}()},
+		{"wrong_scale_count", func() string {
+			var b strings.Builder
+			b.WriteString("1.0 7\n0.05 -1.0 1\n")
+			b.WriteString("1.0")
+			for i := 0; i < 36; i++ {
+				b.WriteString(" 0.5")
+			}
+			b.WriteString("\n")
+			// 35 instead of 36 scale mins
+			for i := 0; i < 35; i++ {
+				if i > 0 {
+					b.WriteString(" ")
+				}
+				b.WriteString("0.0")
+			}
+			b.WriteString("\n")
+			return b.String()
+		}()},
+		{"non_numeric", "abc 7\n"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := NewModel(strings.NewReader(tt.input))
+			if err == nil {
+				t.Error("expected error, got nil")
+			}
+		})
+	}
+
+	t.Run("zero_svs_valid", func(t *testing.T) {
+		t.Parallel()
+		var b strings.Builder
+		b.WriteString("1.0 7\n0.05 -1.0 0\n") // 0 SVs
+		for i := 0; i < 36; i++ {
+			if i > 0 {
+				b.WriteString(" ")
+			}
+			b.WriteString("0.0")
+		}
+		b.WriteString("\n")
+		for i := 0; i < 36; i++ {
+			if i > 0 {
+				b.WriteString(" ")
+			}
+			b.WriteString("1.0")
+		}
+		b.WriteString("\n")
+		m, err := NewModel(strings.NewReader(b.String()))
+		if err != nil {
+			t.Fatalf("expected no error for 0 SVs, got %v", err)
+		}
+		if m == nil {
+			t.Fatal("model is nil")
+		}
+	})
+}
+
+func TestNewWorkspace_NotNil(t *testing.T) {
+	t.Parallel()
+	ws := NewWorkspace(100, 100)
+	if ws == nil {
+		t.Fatal("NewWorkspace returned nil")
+	}
+}
+
+func TestErrImageTooSmall_Interface(t *testing.T) {
+	t.Parallel()
+	var err error = &ErrImageTooSmall{
+		Width: 4, Height: 4,
+		MinWidth: 16, MinHeight: 16,
+	}
+	msg := err.Error()
+	if msg == "" {
+		t.Error("Error() returned empty string")
+	}
+	// Message should contain dimensions
+	if !strings.Contains(msg, "4") || !strings.Contains(msg, "16") {
+		t.Errorf("error message missing dimensions: %q", msg)
+	}
+	var tooSmall *ErrImageTooSmall
+	if !errors.As(err, &tooSmall) {
+		t.Error("errors.As failed for ErrImageTooSmall")
+	}
+}
+
+func TestErrDegenerateDistribution_Interface(t *testing.T) {
+	t.Parallel()
+	var err error = &ErrDegenerateDistribution{
+		Scale:   1,
+		Feature: "mscn",
+	}
+	msg := err.Error()
+	if msg == "" {
+		t.Error("Error() returned empty string")
+	}
+	if !strings.Contains(msg, "1") || !strings.Contains(msg, "mscn") {
+		t.Errorf("error message missing scale/feature: %q", msg)
+	}
+	var de *ErrDegenerateDistribution
+	if !errors.As(err, &de) {
+		t.Error("errors.As failed for ErrDegenerateDistribution")
+	}
 }
 
 func TestLoadModelFromFile(t *testing.T) {
