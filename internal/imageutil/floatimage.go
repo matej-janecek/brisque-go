@@ -86,38 +86,6 @@ func luminance(r, g, b uint32) float64 {
 	return (0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)) / 256.0
 }
 
-// FromImage converts an image.Image to a FloatImage (grayscale luminance).
-// It uses fast paths for image.Gray, image.RGBA, and image.NRGBA.
-func FromImage(img image.Image) *FloatImage {
-	bounds := img.Bounds()
-	fi := NewFloatImage(bounds)
-
-	switch src := img.(type) {
-	case *image.Gray:
-		fromGray(fi, src)
-	case *image.RGBA:
-		fromRGBA(fi, src)
-	case *image.NRGBA:
-		fromNRGBA(fi, src)
-	default:
-		fromGeneric(fi, img)
-	}
-	return fi
-}
-
-// FromGrayBytes converts raw grayscale bytes to a FloatImage.
-func FromGrayBytes(pix []byte, width, height int) *FloatImage {
-	fi := &FloatImage{
-		Pix:    make([]float64, width*height),
-		Stride: width,
-		Rect:   image.Rect(0, 0, width, height),
-	}
-	for i, v := range pix[:width*height] {
-		fi.Pix[i] = float64(v)
-	}
-	return fi
-}
-
 // FromGrayBytesInto converts raw grayscale bytes into an existing FloatImage.
 func FromGrayBytesInto(dst *FloatImage, pix []byte, width, height int) {
 	dst.Reset(image.Rect(0, 0, width, height))

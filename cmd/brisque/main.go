@@ -31,10 +31,10 @@ func main() {
 
 	args := flag.Args()
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: brisque [flags] <image> [image...]")
-		fmt.Fprintln(os.Stderr, "       brisque [flags] <directory>")
-		fmt.Fprintln(os.Stderr, "       brisque [flags] <glob-pattern>")
-		fmt.Fprintln(os.Stderr, "\nflags:")
+		_, _ = fmt.Fprintln(os.Stderr, "usage: brisque [flags] <image> [image...]")
+		_, _ = fmt.Fprintln(os.Stderr, "       brisque [flags] <directory>")
+		_, _ = fmt.Fprintln(os.Stderr, "       brisque [flags] <glob-pattern>")
+		_, _ = fmt.Fprintln(os.Stderr, "\nflags:")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
@@ -42,12 +42,12 @@ func main() {
 	// Expand arguments: directories, globs
 	files, err := expandArgs(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
 	if len(files) == 0 {
-		fmt.Fprintln(os.Stderr, "error: no image files found")
+		_, _ = fmt.Fprintln(os.Stderr, "error: no image files found")
 		os.Exit(1)
 	}
 
@@ -69,11 +69,14 @@ func main() {
 	if *jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(results)
+		if err := enc.Encode(results); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "error encoding JSON: %v\n", err)
+			hasError = true
+		}
 	} else {
 		for _, r := range results {
 			if r.Error != "" {
-				fmt.Fprintf(os.Stderr, "%s: error: %s\n", r.File, r.Error)
+				_, _ = fmt.Fprintf(os.Stderr, "%s: error: %s\n", r.File, r.Error)
 				hasError = true
 			} else {
 				fmt.Printf("%s\t%.4f\n", r.File, r.Score)
@@ -176,12 +179,16 @@ func processFiles(ctx context.Context, model *brisque.Model, files []string, wor
 	return results
 }
 
-func scoreFile(ctx context.Context, model *brisque.Model, path string) (float64, error) {
+func scoreFile(ctx context.Context, model *brisque.Model, path string) (score float64, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing %s: %w", path, cerr)
+		}
+	}()
 
 	img, _, err := image.Decode(f)
 	if err != nil {

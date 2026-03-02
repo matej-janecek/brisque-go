@@ -6,6 +6,9 @@ import (
 	"image/color"
 	"image/jpeg"
 	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -192,7 +195,7 @@ func TestGoldenSample(t *testing.T) {
 	if err != nil {
 		t.Skip("golden test image not available:", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	img, err := jpeg.Decode(f)
 	if err != nil {
@@ -237,5 +240,89 @@ func TestScoreWithWorkspace(t *testing.T) {
 	}
 	if score != score2 {
 		t.Errorf("scores differ on reuse: %.4f vs %.4f", score, score2)
+	}
+}
+
+func TestOptions(t *testing.T) {
+	ctx := context.Background()
+	img := image.NewGray(image.Rect(0, 0, 64, 64))
+	for i := range img.Pix {
+		img.Pix[i] = uint8(i % 256)
+	}
+
+	t.Run("WithWorkspacePool", func(t *testing.T) {
+		pool := &sync.Pool{}
+		m := DefaultModel(WithWorkspacePool(pool))
+		if m.cfg.workspacePool != pool {
+			t.Fatal("workspace pool not set")
+		}
+	})
+
+	t.Run("WithParallelThreshold", func(t *testing.T) {
+		m := DefaultModel(WithParallelThreshold(0))
+		_, err := m.ScoreImage(ctx, img)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("WithLogger", func(t *testing.T) {
+		m := DefaultModel(WithLogger(nil))
+		_, err := m.ScoreImage(ctx, img)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("WithUnsafeOptimizations", func(t *testing.T) {
+		m := DefaultModel(WithUnsafeOptimizations())
+		_, err := m.ScoreImage(ctx, img)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestLoadModelFromFile(t *testing.T) {
+	// Build a minimal model file: 1 support vector, 36 features.
+	var buf strings.Builder
+	buf.WriteString("1.166667 7\n")  // kernel_sigma kernel_size
+	buf.WriteString("0.05 -1.0 1\n") // gamma rho nsv
+	buf.WriteString("1.0")
+	for i := 0; i < 36; i++ {
+		buf.WriteString(" 0.5")
+	}
+	buf.WriteString("\n")
+	// scale mins
+	for i := 0; i < 36; i++ {
+		if i > 0 {
+			buf.WriteString(" ")
+		}
+		buf.WriteString("0.0")
+	}
+	buf.WriteString("\n")
+	// scale maxs
+	for i := 0; i < 36; i++ {
+		if i > 0 {
+			buf.WriteString(" ")
+		}
+		buf.WriteString("1.0")
+	}
+	buf.WriteString("\n")
+
+	path := filepath.Join(t.TempDir(), "test.model")
+	if err := os.WriteFile(path, []byte(buf.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := LoadModelFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadModelFromFile: %v", err)
+	}
+	if m == nil {
+		t.Fatal("model is nil")
+	}
+	if m.svr.NSV != 1 {
+		t.Errorf("expected 1 SV, got %d", m.svr.NSV)
 	}
 }

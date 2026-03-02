@@ -183,11 +183,15 @@ func (m *Model) parse(r io.Reader) error {
 }
 
 // LoadModelFromFile is a convenience function that loads a model from a file path.
-func LoadModelFromFile(path string, opts ...Option) (*Model, error) {
+func LoadModelFromFile(path string, opts ...Option) (m *Model, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("brisque: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("brisque: %w", cerr)
+		}
+	}()
 	return NewModel(f, opts...)
 }

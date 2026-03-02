@@ -60,32 +60,3 @@ func Convolve(dst, src *imageutil.FloatImage, kernel []float64, tmp []float64) {
 		}
 	}
 }
-
-// ConvolveHV performs horizontal and vertical convolutions separately,
-// allowing different operations between passes. This variant writes
-// the horizontal pass result into tmp (outW x srcH) and returns it.
-// The caller is responsible for the vertical pass.
-func ConvolveHV(src *imageutil.FloatImage, kernel []float64, tmp []float64) (tmpStride, outW, srcH int) {
-	ksize := len(kernel)
-	srcW := src.Width()
-	srcHt := src.Height()
-
-	outW = srcW - ksize + 1
-	if outW <= 0 {
-		return 0, 0, 0
-	}
-
-	tmpStride = outW
-	for y := 0; y < srcHt; y++ {
-		srcRow := src.Pix[y*src.Stride : y*src.Stride+srcW]
-		tmpRow := tmp[y*tmpStride : y*tmpStride+outW]
-		for x := 0; x < outW; x++ {
-			sum := 0.0
-			for k := 0; k < ksize; k++ {
-				sum += srcRow[x+k] * kernel[k]
-			}
-			tmpRow[x] = sum
-		}
-	}
-	return tmpStride, outW, srcHt
-}

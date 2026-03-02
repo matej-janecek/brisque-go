@@ -157,6 +157,6 @@ func BenchmarkFitGGD(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		FitGGD(data)
+		_, _, _ = FitGGD(data)
 	}
 }
