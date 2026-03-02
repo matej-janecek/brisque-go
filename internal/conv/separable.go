@@ -1,6 +1,7 @@
 package conv
 
 import (
+	"context"
 	"image"
 
 	"github.com/matej/brisque-go/internal/imageutil"
@@ -72,7 +73,8 @@ func Convolve(dst, src *imageutil.FloatImage, kernel []float64, tmp []float32) {
 // ConvolveReplicate performs a separable 2D convolution with BORDER_REPLICATE
 // padding, producing a same-size output. This matches OpenCV's GaussianBlur
 // with cv::BORDER_REPLICATE using float32 throughout (CV_32F filter engine).
-func ConvolveReplicate(dst, src *imageutil.FloatImage, kernel []float64, tmp []float32) {
+// A cancellation check is performed between the horizontal and vertical passes.
+func ConvolveReplicate(ctx context.Context, dst, src *imageutil.FloatImage, kernel []float64, tmp []float32) error {
 	ksize := len(kernel)
 	half := ksize / 2
 	srcW := src.Width()
@@ -130,6 +132,13 @@ func ConvolveReplicate(dst, src *imageutil.FloatImage, kernel []float64, tmp []f
 		}
 	}
 
+	// Check for cancellation between passes
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	// Vertical pass with BORDER_REPLICATE
 	for y := 0; y < srcH; y++ {
 		dstRow := dst.Pix[y*dst.Stride : y*dst.Stride+srcW]
@@ -160,4 +169,6 @@ func ConvolveReplicate(dst, src *imageutil.FloatImage, kernel []float64, tmp []f
 			}
 		}
 	}
+
+	return nil
 }

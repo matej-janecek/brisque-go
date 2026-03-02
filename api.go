@@ -2,6 +2,7 @@ package brisque
 
 import (
 	"context"
+	"errors"
 	"image"
 	"runtime"
 	"sync"
@@ -9,6 +10,7 @@ import (
 	"github.com/matej/brisque-go/internal/features"
 	"github.com/matej/brisque-go/internal/imageutil"
 	"github.com/matej/brisque-go/internal/scaler"
+	"github.com/matej/brisque-go/internal/stats"
 	"github.com/matej/brisque-go/internal/svr"
 )
 
@@ -181,7 +183,11 @@ func (m *Model) Features(ctx context.Context, img image.Image) ([36]float64, err
 	defer pool.Put(ws)
 
 	imageutil.FromImageInto(ws.Src, img)
-	return features.Extract(ws.Src, m.kernel, ws)
+	feats, err := features.Extract(ctx, ws.Src, m.kernel, ws)
+	if err != nil {
+		return feats, mapFeatureError(err)
+	}
+	return feats, nil
 }
 
 func (m *Model) scoreWithWorkspace(ctx context.Context, ws *features.Workspace, img image.Image) (float64, error) {
@@ -212,9 +218,9 @@ func (m *Model) predict(ctx context.Context, ws *features.Workspace, fi *imageut
 	default:
 	}
 
-	feats, err := features.Extract(fi, m.kernel, ws)
+	feats, err := features.Extract(ctx, fi, m.kernel, ws)
 	if err != nil {
-		return 0, err
+		return 0, mapFeatureError(err)
 	}
 
 	scaler.Scale(&feats, m.scaleMins, m.scaleMaxs)
@@ -228,4 +234,21 @@ func (m *Model) predict(ctx context.Context, ws *features.Workspace, fi *imageut
 	}
 
 	return score, nil
+}
+
+// mapFeatureError converts internal feature-extraction errors to the
+// public error types documented in this package.
+func mapFeatureError(err error) error {
+	var ts *features.TooSmallError
+	if errors.As(err, &ts) {
+		return &ErrImageTooSmall{
+			Width: ts.W, Height: ts.H,
+			MinWidth: ts.MinDim, MinHeight: ts.MinDim,
+		}
+	}
+	var de *stats.DegenerateError
+	if errors.As(err, &de) {
+		return &ErrDegenerateDistribution{}
+	}
+	return err
 }

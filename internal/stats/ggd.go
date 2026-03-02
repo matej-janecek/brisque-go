@@ -14,7 +14,7 @@ func gammaFunc(x float64) float64 { return math.Gamma(x) }
 func FitGGD(data []float64) (alpha, sigma2 float64, err error) {
 	n := len(data)
 	if n == 0 {
-		return 0, 0, &degenerateError{}
+		return 0, 0, &DegenerateError{}
 	}
 
 	// Compute mean(|x|) and mean(x²)
@@ -87,8 +87,10 @@ func gammaRatio(a float64) float64 {
 	return (g2 * g2) / (g1 * g3)
 }
 
-type degenerateError struct{}
+// DegenerateError indicates that statistical fitting failed due to
+// degenerate input data (e.g., empty or near-zero variance).
+type DegenerateError struct{}
 
-func (e *degenerateError) Error() string {
+func (e *DegenerateError) Error() string {
 	return "degenerate distribution"
 }

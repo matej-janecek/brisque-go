@@ -45,6 +45,5 @@
 // All scoring methods return typed errors that can be inspected with type assertions:
 //
 //   - [ErrImageTooSmall]: image dimensions below 16x16
-//   - [ErrUniformImage]: solid-color image with zero variance
 //   - [ErrDegenerateDistribution]: statistical fitting failure (rare, usually synthetic images)
 package brisque

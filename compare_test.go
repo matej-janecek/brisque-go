@@ -201,7 +201,7 @@ func extractGoFeatures(t *testing.T, img image.Image, m *Model) [36]float64 {
 
 	imageutil.FromImageInto(ws.Src, img)
 
-	feats, err := features.Extract(ws.Src, m.kernel, ws)
+	feats, err := features.Extract(context.Background(), ws.Src, m.kernel, ws)
 	if err != nil {
 		t.Fatalf("extractFeatures: %v", err)
 	}

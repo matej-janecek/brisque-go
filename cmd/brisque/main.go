@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -129,7 +130,7 @@ func expandArgs(args []string) ([]string, error) {
 }
 
 func isImageFile(name string) bool {
-	ext := filepath.Ext(name)
+	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {
 	case ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif":
 		return true

@@ -1,6 +1,7 @@
 package features
 
 import (
+	"context"
 	"image"
 	"math"
 
@@ -45,22 +46,30 @@ func NewWorkspace(maxW, maxH int) *Workspace {
 
 // Extract computes all 36 BRISQUE features from the given float image.
 // kernel is the precomputed 1D Gaussian kernel. ws is a pre-allocated workspace.
-func Extract(img *imageutil.FloatImage, kernel []float64, ws *Workspace) ([NumFeatures]float64, error) {
+// Context cancellation is checked between pipeline stages.
+func Extract(ctx context.Context, img *imageutil.FloatImage, kernel []float64, ws *Workspace) ([NumFeatures]float64, error) {
 	var features [NumFeatures]float64
 
 	// Scale 1: original
-	f1, err := extractScale(img, kernel, ws)
+	f1, err := extractScale(ctx, img, kernel, ws)
 	if err != nil {
 		return features, err
 	}
 	copy(features[:18], f1[:])
+
+	// Check cancellation before downsampling
+	select {
+	case <-ctx.Done():
+		return features, ctx.Err()
+	default:
+	}
 
 	// Downsample original for scale 2 using bicubic interpolation
 	// matching OpenCV's cv::resize with INTER_CUBIC.
 	ResizeCubicHalf(ws.half, img)
 
 	// Scale 2: half
-	f2, err := extractScale(ws.half, kernel, ws)
+	f2, err := extractScale(ctx, ws.half, kernel, ws)
 	if err != nil {
 		return features, err
 	}
@@ -71,25 +80,29 @@ func Extract(img *imageutil.FloatImage, kernel []float64, ws *Workspace) ([NumFe
 
 // extractScale extracts 18 features from a single scale, matching the
 // OpenCV BRISQUE implementation (qualitybrisque.cpp).
-func extractScale(img *imageutil.FloatImage, kernel []float64, ws *Workspace) ([18]float64, error) {
+func extractScale(ctx context.Context, img *imageutil.FloatImage, kernel []float64, ws *Workspace) ([18]float64, error) {
 	var features [18]float64
 	w := img.Width()
 	h := img.Height()
 	n := w * h
 
 	if w < len(kernel) || h < len(kernel) {
-		return features, &tooSmallError{w, h, len(kernel)}
+		return features, &TooSmallError{w, h, len(kernel)}
 	}
 
 	// 1. mu = GaussianBlur(I, BORDER_REPLICATE) — same size as input
-	conv.ConvolveReplicate(ws.mu, img, kernel, ws.tmp)
+	if err := conv.ConvolveReplicate(ctx, ws.mu, img, kernel, ws.tmp); err != nil {
+		return features, err
+	}
 
 	// 2. sigma = sqrt(max(0, GaussianBlur(I^2) - mu^2)) + C
 	ws.imgSq.Reset(img.Rect)
 	for i := 0; i < n; i++ {
 		ws.imgSq.Pix[i] = img.Pix[i] * img.Pix[i]
 	}
-	conv.ConvolveReplicate(ws.imgSqMu, ws.imgSq, kernel, ws.tmp)
+	if err := conv.ConvolveReplicate(ctx, ws.imgSqMu, ws.imgSq, kernel, ws.tmp); err != nil {
+		return features, err
+	}
 
 	ws.mscn.Reset(img.Rect)
 	ws.sigma.Reset(img.Rect)
@@ -118,6 +131,13 @@ func extractScale(img *imageutil.FloatImage, kernel []float64, ws *Workspace) ([
 	}
 	features[0] = aggdAlpha
 	features[1] = (ls2 + rs2) / 2.0 // OpenCV: (lsigma^2 + rsigma^2) / 2
+
+	// Check cancellation before shift products
+	select {
+	case <-ctx.Done():
+		return features, ctx.Err()
+	default:
+	}
 
 	// 4. Pairwise shifted products with zero-padding (matching OpenCV).
 	// OpenCV creates a full-size shifted image, zeros where shift goes OOB,
@@ -182,10 +202,12 @@ func imageRect(w, h int) image.Rectangle {
 	return image.Rect(0, 0, w, h)
 }
 
-type tooSmallError struct {
-	w, h, minDim int
+// TooSmallError indicates that the image is too small for convolution
+// with the given kernel.
+type TooSmallError struct {
+	W, H, MinDim int
 }
 
-func (e *tooSmallError) Error() string {
+func (e *TooSmallError) Error() string {
 	return "image too small for convolution"
 }

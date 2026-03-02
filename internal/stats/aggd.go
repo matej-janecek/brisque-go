@@ -12,7 +12,7 @@ import "math"
 func FitAGGD(data []float64) (alpha, leftSigma2, rightSigma2, mean float64, err error) {
 	n := len(data)
 	if n == 0 {
-		return 0, 0, 0, 0, &degenerateError{}
+		return 0, 0, 0, 0, &DegenerateError{}
 	}
 
 	// Split into left and right

@@ -14,26 +14,6 @@ func (e *ErrImageTooSmall) Error() string {
 		e.Width, e.Height, e.MinWidth, e.MinHeight)
 }
 
-// ErrInvalidFeatureCount reports a mismatch between the expected and
-// actual number of features.
-type ErrInvalidFeatureCount struct {
-	Expected int
-	Actual   int
-}
-
-func (e *ErrInvalidFeatureCount) Error() string {
-	return fmt.Sprintf("brisque: invalid feature count: expected %d, got %d",
-		e.Expected, e.Actual)
-}
-
-// ErrUniformImage indicates that the image has zero variance and
-// cannot be scored meaningfully.
-type ErrUniformImage struct{}
-
-func (e *ErrUniformImage) Error() string {
-	return "brisque: uniform image (zero variance), cannot compute quality score"
-}
-
 // ErrDegenerateDistribution indicates that the GGD or AGGD fitting
 // failed due to degenerate input data.
 type ErrDegenerateDistribution struct {

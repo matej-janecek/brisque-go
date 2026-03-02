@@ -1,9 +1,6 @@
 package imageutil
 
-import (
-	"image"
-	"image/color"
-)
+import "image"
 
 // FloatImage is a flat float32 image representation optimized for
 // numerical processing. It mirrors image.Gray's layout but uses
@@ -183,8 +180,6 @@ func fromGeneric(dst *FloatImage, src image.Image) {
 		dstOff := (y - bounds.Min.Y) * dst.Stride
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			r, g, b, _ := src.At(x, y).RGBA()
-			// color.RGBA() returns values in [0, 0xFFFF]
-			_ = color.Black // keep color import
 			dst.Pix[dstOff+(x-bounds.Min.X)] = luminance(r, g, b)
 		}
 	}
