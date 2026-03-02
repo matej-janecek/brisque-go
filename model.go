@@ -31,8 +31,16 @@ type Model struct {
 	cfg config
 }
 
-// NewModel creates a Model from a reader containing the model data in
-// the library's binary format. Use LoadModelFromFile for convenience.
+// NewModel creates a [Model] from a reader containing the model data in a
+// text format. The format is:
+//
+//	Line 1:        kernel_sigma kernel_size
+//	Line 2:        gamma rho num_support_vectors
+//	Lines 3..N+2:  alpha sv[0] sv[1] ... sv[35]   (one line per support vector)
+//	Line N+3:      min[0] min[1] ... min[35]       (feature scaling minimums)
+//	Line N+4:      max[0] max[1] ... max[35]       (feature scaling maximums)
+//
+// Use [LoadModelFromFile] for convenience, or [DefaultModel] for the embedded model.
 func NewModel(r io.Reader, opts ...Option) (*Model, error) {
 	m := &Model{
 		cfg: defaultConfig(),
@@ -49,8 +57,9 @@ func NewModel(r io.Reader, opts ...Option) (*Model, error) {
 	return m, nil
 }
 
-// DefaultModel returns a Model using the embedded default OpenCV BRISQUE
-// model. This requires no external files.
+// DefaultModel returns a [Model] using the embedded default model (trained on
+// the LIVE-R2 image quality database, same weights as OpenCV's brisque_model_live.yml).
+// No external files are required.
 func DefaultModel(opts ...Option) *Model {
 	m := &Model{
 		cfg: defaultConfig(),
@@ -182,7 +191,8 @@ func (m *Model) parse(r io.Reader) error {
 	return scanner.Err()
 }
 
-// LoadModelFromFile is a convenience function that loads a model from a file path.
+// LoadModelFromFile loads a model from a text file. See [NewModel] for the
+// expected file format.
 func LoadModelFromFile(path string, opts ...Option) (m *Model, err error) {
 	f, err := os.Open(path)
 	if err != nil {

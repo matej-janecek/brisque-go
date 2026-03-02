@@ -25,6 +25,8 @@ var defaultPool = &sync.Pool{
 
 // ScoreImage computes the BRISQUE quality score for the given image.
 // Lower scores indicate better perceptual quality (typical range 0–100).
+// The image must be at least 16×16 pixels or [ErrImageTooSmall] is returned.
+// Context cancellation is respected between pipeline stages.
 func (m *Model) ScoreImage(ctx context.Context, img image.Image) (float64, error) {
 	pool := m.cfg.workspacePool
 	if pool == nil {
@@ -37,7 +39,9 @@ func (m *Model) ScoreImage(ctx context.Context, img image.Image) (float64, error
 }
 
 // ScoreGray computes the BRISQUE score from raw grayscale pixel data.
-// pix must contain width*height bytes in row-major order.
+// pix must contain exactly width*height bytes in row-major order, where
+// each byte is a luminance value in [0, 255].
+// Both dimensions must be at least 16 or [ErrImageTooSmall] is returned.
 func (m *Model) ScoreGray(ctx context.Context, pix []byte, width, height int) (float64, error) {
 	if width < minImageDim || height < minImageDim {
 		return 0, &ErrImageTooSmall{
@@ -58,13 +62,16 @@ func (m *Model) ScoreGray(ctx context.Context, pix []byte, width, height int) (f
 }
 
 // ScoreWithWorkspace computes the BRISQUE score using a pre-allocated
-// workspace for zero-allocation operation.
+// [Workspace] for zero-allocation operation. The workspace must have been
+// created with dimensions >= the input image. The workspace must not be
+// used concurrently; see [Workspace] for details.
 func (m *Model) ScoreWithWorkspace(ctx context.Context, ws *Workspace, img image.Image) (float64, error) {
 	return m.scoreWithWorkspace(ctx, ws.fw, img)
 }
 
 // ScoreBatch computes BRISQUE scores for multiple images concurrently.
-// Returns scores in the same order as the input slice.
+// Returns scores in the same order as the input slice, using up to
+// GOMAXPROCS workers. Returns (nil, nil) for an empty input slice.
 // Processing stops on the first error or context cancellation.
 func (m *Model) ScoreBatch(ctx context.Context, images []image.Image) ([]float64, error) {
 	n := len(images)

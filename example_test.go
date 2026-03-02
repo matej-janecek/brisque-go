@@ -84,6 +84,25 @@ func ExampleModel_ScoreBatch() {
 	// scored 3 images
 }
 
+func ExampleModel_ScoreImage_errorHandling() {
+	model := brisque.DefaultModel()
+	ctx := context.Background()
+
+	// Image too small (8x8 < minimum 16x16)
+	tiny := image.NewGray(image.Rect(0, 0, 8, 8))
+	_, err := model.ScoreImage(ctx, tiny)
+	if err != nil {
+		switch err.(type) {
+		case *brisque.ErrImageTooSmall:
+			fmt.Println("image too small")
+		default:
+			fmt.Println("other error:", err)
+		}
+	}
+	// Output:
+	// image too small
+}
+
 func ExampleModel_ScoreWithWorkspace() {
 	model := brisque.DefaultModel()
 	ctx := context.Background()
