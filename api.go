@@ -150,6 +150,40 @@ func (m *Model) ScoreBatch(ctx context.Context, images []image.Image) ([]float64
 	return scores, nil
 }
 
+// Features extracts the 36 raw BRISQUE features from the given image without
+// running SVR prediction. This is equivalent to OpenCV's
+// QualityBRISQUE::computeFeatures. The features are not scaled to [-1, 1];
+// they are the raw statistical values (AGGD alpha, sigma², and shift-product
+// parameters) at two scales (indices 0–17 for scale 1, 18–35 for scale 2).
+//
+// The image must be at least 16×16 pixels or [ErrImageTooSmall] is returned.
+func (m *Model) Features(ctx context.Context, img image.Image) ([36]float64, error) {
+	bounds := img.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	if w < minImageDim || h < minImageDim {
+		return [36]float64{}, &ErrImageTooSmall{
+			Width: w, Height: h,
+			MinWidth: minImageDim, MinHeight: minImageDim,
+		}
+	}
+
+	select {
+	case <-ctx.Done():
+		return [36]float64{}, ctx.Err()
+	default:
+	}
+
+	pool := m.cfg.workspacePool
+	if pool == nil {
+		pool = defaultPool
+	}
+	ws := pool.Get().(*features.Workspace)
+	defer pool.Put(ws)
+
+	imageutil.FromImageInto(ws.Src, img)
+	return features.Extract(ws.Src, m.kernel, ws)
+}
+
 func (m *Model) scoreWithWorkspace(ctx context.Context, ws *features.Workspace, img image.Image) (float64, error) {
 	bounds := img.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()

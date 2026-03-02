@@ -17,6 +17,11 @@
 //
 //	score, err := model.ScoreGray(ctx, pixelBytes, width, height)
 //
+// To extract the raw 36 features without SVR prediction (equivalent to
+// OpenCV's QualityBRISQUE::computeFeatures):
+//
+//	feats, err := model.Features(ctx, img)
+//
 // For zero-allocation hot paths, pre-allocate a [Workspace]:
 //
 //	ws := brisque.NewWorkspace(1920, 1080)

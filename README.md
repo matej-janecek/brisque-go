@@ -88,6 +88,9 @@ score, err := model.ScoreWithWorkspace(ctx, ws, img)
 
 // Batch scoring (concurrent, bounded by GOMAXPROCS)
 scores, err := model.ScoreBatch(ctx, images)
+
+// Extract raw 36 features without SVR prediction
+feats, err := model.Features(ctx, img)
 ```
 
 ### Error Handling

@@ -103,6 +103,27 @@ func ExampleModel_ScoreImage_errorHandling() {
 	// image too small
 }
 
+func ExampleModel_Features() {
+	model := brisque.DefaultModel()
+	ctx := context.Background()
+
+	img := image.NewGray(image.Rect(0, 0, 64, 64))
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			img.SetGray(x, y, color.Gray{Y: uint8((x + y) % 256)})
+		}
+	}
+
+	feats, err := model.Features(ctx, img)
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Printf("extracted %d features\n", len(feats))
+	// Output:
+	// extracted 36 features
+}
+
 func ExampleModel_ScoreWithWorkspace() {
 	model := brisque.DefaultModel()
 	ctx := context.Background()
