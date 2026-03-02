@@ -17,7 +17,7 @@ Lower scores indicate better perceptual quality. Typical range is 0–100 for na
 ## Install
 
 ```
-go get github.com/matej/brisque-go
+go get github.com/matej-janecek/brisque-go
 ```
 
 ## Quick Start
@@ -31,7 +31,7 @@ import (
     "image/jpeg"
     "os"
 
-    brisque "github.com/matej/brisque-go"
+    brisque "github.com/matej-janecek/brisque-go"
 )
 
 func main() {
@@ -113,7 +113,7 @@ if err != nil {
 ## CLI
 
 ```
-go install github.com/matej/brisque-go/cmd/brisque@latest
+go install github.com/matej-janecek/brisque-go/cmd/brisque@latest
 ```
 
 ```bash
