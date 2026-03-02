@@ -48,7 +48,7 @@ func TestConvolve_Impulse(t *testing.T) {
 	src.Set(2, 2, 1.0) // impulse at center
 
 	dst := imageutil.NewFloatImage(image.Rect(0, 0, 5, 5))
-	tmp := make([]float64, 5*5)
+	tmp := make([]float32, 5*5)
 
 	Convolve(dst, src, kernel, tmp)
 
@@ -58,9 +58,9 @@ func TestConvolve_Impulse(t *testing.T) {
 	}
 
 	// The center pixel of output should be kernel[1]*kernel[1] (center*center)
-	center := dst.At(2, 2) // (2,2) in absolute coordinates
+	center := float64(dst.At(2, 2)) // (2,2) in absolute coordinates
 	expected := kernel[1] * kernel[1]
-	if math.Abs(center-expected) > 1e-10 {
+	if math.Abs(center-expected) > 1e-6 {
 		t.Errorf("center pixel = %f, expected %f", center, expected)
 	}
 }
@@ -68,7 +68,7 @@ func TestConvolve_Impulse(t *testing.T) {
 func TestConvolve_Constant(t *testing.T) {
 	// Convolving a constant image should give a constant output
 	kernel := MakeGaussianKernel(1.0, 3)
-	constVal := 42.0
+	var constVal float32 = 42.0
 
 	src := imageutil.NewFloatImage(image.Rect(0, 0, 10, 10))
 	for i := range src.Pix {
@@ -76,13 +76,13 @@ func TestConvolve_Constant(t *testing.T) {
 	}
 
 	dst := imageutil.NewFloatImage(image.Rect(0, 0, 10, 10))
-	tmp := make([]float64, 10*10)
+	tmp := make([]float32, 10*10)
 
 	Convolve(dst, src, kernel, tmp)
 
 	// All output pixels should be constVal
 	for i, v := range dst.Pix[:dst.Width()*dst.Height()] {
-		if math.Abs(v-constVal) > 1e-10 {
+		if math.Abs(float64(v)-float64(constVal)) > 1e-4 {
 			t.Errorf("pixel %d = %f, expected %f", i, v, constVal)
 			break
 		}

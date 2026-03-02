@@ -179,5 +179,12 @@ func (m *Model) predict(ctx context.Context, ws *features.Workspace, fi *imageut
 	scaler.Scale(&feats, m.scaleMins, m.scaleMaxs)
 	score := svr.Predict(feats, m.svr)
 
+	// Clamp to [0, 100] matching OpenCV's qualitybrisque.cpp
+	if score < 0 {
+		score = 0
+	} else if score > 100 {
+		score = 100
+	}
+
 	return score, nil
 }

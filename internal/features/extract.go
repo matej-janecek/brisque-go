@@ -18,8 +18,8 @@ type Workspace struct {
 	mu      *imageutil.FloatImage // local mean
 	sigma   *imageutil.FloatImage // local variance -> std dev
 	mscn    *imageutil.FloatImage // MSCN coefficients
-	tmp     []float64             // convolution temp buffer
-	muSq    *imageutil.FloatImage // mu squared (temp)
+	tmp     []float32             // convolution temp buffer (float32 matching OpenCV)
+	aggdBuf []float64             // float64 buffer for AGGD fitting conversion
 	imgSq   *imageutil.FloatImage // img squared (temp)
 	imgSqMu *imageutil.FloatImage // convolved img squared
 	shifted *imageutil.FloatImage // shifted product temp
@@ -30,16 +30,16 @@ type Workspace struct {
 func NewWorkspace(maxW, maxH int) *Workspace {
 	maxPixels := maxW * maxH
 	return &Workspace{
-		Src:     imageutil.NewFloatImage(image.Rect(0, 0, maxW, maxH)),
-		mu:      imageutil.NewFloatImage(image.Rect(0, 0, maxW, maxH)),
-		sigma:   imageutil.NewFloatImage(image.Rect(0, 0, maxW, maxH)),
-		mscn:    imageutil.NewFloatImage(image.Rect(0, 0, maxW, maxH)),
-		tmp:     make([]float64, maxPixels),
-		muSq:    imageutil.NewFloatImage(image.Rect(0, 0, maxW, maxH)),
-		imgSq:   imageutil.NewFloatImage(image.Rect(0, 0, maxW, maxH)),
-		imgSqMu: imageutil.NewFloatImage(image.Rect(0, 0, maxW, maxH)),
-		shifted: imageutil.NewFloatImage(image.Rect(0, 0, maxW, maxH)),
-		half:    imageutil.NewFloatImage(image.Rect(0, 0, maxW/2, maxH/2)),
+		Src:     imageutil.NewFloatImage(imageRect(maxW, maxH)),
+		mu:      imageutil.NewFloatImage(imageRect(maxW, maxH)),
+		sigma:   imageutil.NewFloatImage(imageRect(maxW, maxH)),
+		mscn:    imageutil.NewFloatImage(imageRect(maxW, maxH)),
+		tmp:     make([]float32, maxPixels),
+		aggdBuf: make([]float64, maxPixels),
+		imgSq:   imageutil.NewFloatImage(imageRect(maxW, maxH)),
+		imgSqMu: imageutil.NewFloatImage(imageRect(maxW, maxH)),
+		shifted: imageutil.NewFloatImage(imageRect(maxW, maxH)),
+		half:    imageutil.NewFloatImage(imageRect(maxW/2, maxH/2)),
 	}
 }
 
@@ -55,8 +55,9 @@ func Extract(img *imageutil.FloatImage, kernel []float64, ws *Workspace) ([NumFe
 	}
 	copy(features[:18], f1[:])
 
-	// Downsample for scale 2
-	Downsample2x(ws.half, img)
+	// Downsample original for scale 2 using bicubic interpolation
+	// matching OpenCV's cv::resize with INTER_CUBIC.
+	ResizeCubicHalf(ws.half, img)
 
 	// Scale 2: half
 	f2, err := extractScale(ws.half, kernel, ws)
@@ -68,166 +69,117 @@ func Extract(img *imageutil.FloatImage, kernel []float64, ws *Workspace) ([NumFe
 	return features, nil
 }
 
-// extractScale extracts 18 features from a single scale.
+// extractScale extracts 18 features from a single scale, matching the
+// OpenCV BRISQUE implementation (qualitybrisque.cpp).
 func extractScale(img *imageutil.FloatImage, kernel []float64, ws *Workspace) ([18]float64, error) {
 	var features [18]float64
 	w := img.Width()
 	h := img.Height()
-	ksize := len(kernel)
+	n := w * h
 
-	if w < ksize || h < ksize {
-		return features, &tooSmallError{w, h, ksize}
+	if w < len(kernel) || h < len(kernel) {
+		return features, &tooSmallError{w, h, len(kernel)}
 	}
 
-	// 1. Compute local mean: mu = G * I
-	conv.Convolve(ws.mu, img, kernel, ws.tmp)
+	// 1. mu = GaussianBlur(I, BORDER_REPLICATE) — same size as input
+	conv.ConvolveReplicate(ws.mu, img, kernel, ws.tmp)
 
-	muW := ws.mu.Width()
-	muH := ws.mu.Height()
-	n := muW * muH
-
-	// 2. Compute I^2 into imgSq (within the valid region of mu)
-	ws.imgSq.Reset(ws.mu.Rect)
-	half := ksize / 2
-	for y := 0; y < muH; y++ {
-		imgRow := img.Pix[(y+half)*img.Stride+half : (y+half)*img.Stride+half+muW]
-		sqRow := ws.imgSq.Pix[y*ws.imgSq.Stride : y*ws.imgSq.Stride+muW]
-		for x := 0; x < muW; x++ {
-			sqRow[x] = imgRow[x] * imgRow[x]
-		}
-	}
-
-	// 3. Compute G * I^2
-	conv.Convolve(ws.imgSqMu, ws.imgSq, kernel, ws.tmp)
-
-	// The valid region of imgSqMu is smaller than mu's region.
-	// We need to work in the intersection.
-	sigW := ws.imgSqMu.Width()
-	sigH := ws.imgSqMu.Height()
-
-	// Actually, let's take a simpler approach that matches the standard BRISQUE:
-	// Compute mu and mu^2 in the same valid region.
-	// sigma = sqrt(abs(G * I^2 - mu^2)) + C
-
-	// Recompute: use mu's region for MSCN computation directly
-	// Simpler approach: compute MSCN in mu's valid region
-	ws.mscn.Reset(ws.mu.Rect)
-	ws.sigma.Reset(ws.mu.Rect)
-
-	// Compute sigma = sqrt(|conv(I^2) - mu^2|)
-	// But conv(I^2) has a smaller valid region.
-	// Standard approach: compute mu and sigma using the same convolution bounds.
-
-	// Let's use the standard approach:
-	// mu = conv(I, G)
-	// sigma = sqrt(conv(I^2, G) - mu^2)
-	// Both conv operations produce same-size output from same-size input
-	// So we convolve the FULL image for both.
-
-	// Reconvolve I^2 from scratch on the full image
+	// 2. sigma = sqrt(max(0, GaussianBlur(I^2) - mu^2)) + C
 	ws.imgSq.Reset(img.Rect)
-	for i, v := range img.Pix[:w*h] {
-		ws.imgSq.Pix[i] = v * v
+	for i := 0; i < n; i++ {
+		ws.imgSq.Pix[i] = img.Pix[i] * img.Pix[i]
 	}
-	conv.Convolve(ws.imgSqMu, ws.imgSq, kernel, ws.tmp)
+	conv.ConvolveReplicate(ws.imgSqMu, ws.imgSq, kernel, ws.tmp)
 
-	// Now mu and imgSqMu have the same dimensions
-	sigW = ws.imgSqMu.Width()
-	sigH = ws.imgSqMu.Height()
-	_ = sigW
-	_ = sigH
-
-	// Compute MSCN coefficients
-	ws.mscn.Reset(ws.mu.Rect)
-	ws.sigma.Reset(ws.mu.Rect)
+	ws.mscn.Reset(img.Rect)
+	ws.sigma.Reset(img.Rect)
 	for i := 0; i < n; i++ {
 		muVal := ws.mu.Pix[i]
 		varVal := ws.imgSqMu.Pix[i] - muVal*muVal
 		if varVal < 0 {
 			varVal = 0
 		}
-		sigVal := math.Sqrt(varVal) + 1.0 // C = 1 stabilization constant
+		// C = 1.0 on [0,255] range (matches OpenCV)
+		// math.Sqrt is float64 but result is stored as float32
+		sigVal := float32(math.Sqrt(float64(varVal))) + 1.0
 		ws.sigma.Pix[i] = sigVal
-		// MSCN = (I - mu) / (sigma + C)
-		// Get the corresponding pixel from original image
-		iy := i/ws.mu.Stride + half
-		ix := i%ws.mu.Stride + half
-		origVal := img.Pix[iy*img.Stride+ix]
-		ws.mscn.Pix[i] = (origVal - muVal) / sigVal
+		ws.mscn.Pix[i] = (img.Pix[i] - muVal) / sigVal
 	}
 
-	// 3. Fit GGD to MSCN coefficients
-	mscnData := ws.mscn.Pix[:n]
-	alpha, sigma2, err := stats.FitGGD(mscnData)
+	// 3. Fit AGGD to MSCN coefficients (matching OpenCV which converts
+	//    float MSCN to vector<double> before calling AGGDfit)
+	f64Buf := ws.aggdBuf[:n]
+	for i := 0; i < n; i++ {
+		f64Buf[i] = float64(ws.mscn.Pix[i])
+	}
+	aggdAlpha, ls2, rs2, _, err := stats.FitAGGD(f64Buf)
 	if err != nil {
 		return features, err
 	}
-	features[0] = alpha
-	features[1] = sigma2
+	features[0] = aggdAlpha
+	features[1] = (ls2 + rs2) / 2.0 // OpenCV: (lsigma^2 + rsigma^2) / 2
 
-	// 4. Compute 4 pairwise products and fit AGGD
-	mscnW := ws.mscn.Width()
-	mscnH := ws.mscn.Height()
-
+	// 4. Pairwise shifted products with zero-padding (matching OpenCV).
+	// OpenCV creates a full-size shifted image, zeros where shift goes OOB,
+	// then multiplies. The zeros are included in the AGGD fit.
 	type shift struct {
-		dx, dy int
-		name   string
+		dy, dx int
 	}
+	// OpenCV shifts: {{0,1},{1,0},{1,1},{-1,1}} where [0]=row, [1]=col
 	shifts := [4]shift{
-		{1, 0, "H"},   // horizontal
-		{0, 1, "V"},   // vertical
-		{1, 1, "D1"},  // diagonal 1
-		{1, -1, "D2"}, // diagonal 2
+		{0, 1},  // H: right neighbor
+		{1, 0},  // V: below neighbor
+		{1, 1},  // D1: below-right
+		{-1, 1}, // D2: above-right
 	}
 
 	for si, s := range shifts {
-		// Compute pairwise product between MSCN(x,y) and MSCN(x+dx, y+dy)
-		// Valid region shrinks by the shift amount
-		pW := mscnW - abs(s.dx)
-		pH := mscnH - abs(s.dy)
-		if pW <= 0 || pH <= 0 {
-			continue
+		pairData := ws.shifted.Pix[:n]
+		// Zero-initialize (zeros match OpenCV's out-of-bounds padding)
+		for i := range pairData {
+			pairData[i] = 0
 		}
-
-		startY := 0
-		if s.dy < 0 {
-			startY = -s.dy
-		}
-		endY := startY + pH
-
-		pairData := ws.shifted.Pix[:pW*pH]
-		idx := 0
-		for y := startY; y < endY; y++ {
-			for x := 0; x < pW; x++ {
-				v1 := ws.mscn.Pix[y*mscnW+x]
-				v2 := ws.mscn.Pix[(y+s.dy)*mscnW+(x+s.dx)]
-				pairData[idx] = v1 * v2
-				idx++
+		// Fill valid products (float32 arithmetic matching OpenCV)
+		for y := 0; y < h; y++ {
+			sy := y + s.dy
+			if sy < 0 || sy >= h {
+				continue
+			}
+			srcRow := y * w
+			shiftRow := sy * w
+			for x := 0; x < w; x++ {
+				sx := x + s.dx
+				if sx < 0 || sx >= w {
+					continue
+				}
+				pairData[srcRow+x] = ws.mscn.Pix[srcRow+x] * ws.mscn.Pix[shiftRow+sx]
 			}
 		}
 
-		aggdAlpha, leftSigma2, rightSigma2, mean, err := stats.FitAGGD(pairData[:idx])
+		// Convert float32 pair data to float64 for AGGD fitting
+		// (matches OpenCV's vector<double> conversion)
+		pairF64 := ws.aggdBuf[:n]
+		for i := 0; i < n; i++ {
+			pairF64[i] = float64(pairData[i])
+		}
+
+		pAlpha, pLeftS2, pRightS2, pMean, err := stats.FitAGGD(pairF64)
 		if err != nil {
 			return features, err
 		}
 
 		base := 2 + si*4
-		features[base] = aggdAlpha
-		features[base+1] = mean
-		features[base+2] = leftSigma2
-		features[base+3] = rightSigma2
-
-		_ = s.name
+		features[base] = pAlpha
+		features[base+1] = pMean
+		features[base+2] = pLeftS2
+		features[base+3] = pRightS2
 	}
 
 	return features, nil
 }
 
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
+func imageRect(w, h int) image.Rectangle {
+	return image.Rect(0, 0, w, h)
 }
 
 type tooSmallError struct {

@@ -101,28 +101,26 @@ func FitAGGD(data []float64) (alpha, leftSigma2, rightSigma2, mean float64, err 
 	return alpha, leftSigma2, rightSigma2, mean, nil
 }
 
-// solveAGGDAlpha solves gammaRatio(alpha) = rHatNorm for alpha.
+// solveAGGDAlpha solves gammaRatio(alpha) = rHatNorm for alpha using a
+// linear scan with step 0.001, matching OpenCV's AGGDfit implementation.
 func solveAGGDAlpha(rHatNorm float64) float64 {
 	if rHatNorm <= 0 || math.IsNaN(rHatNorm) || math.IsInf(rHatNorm, 0) {
 		return 2.0
 	}
 
-	lo, hi := 0.2, 10.0
-	const maxIter = 50
-	const tol = 1e-10
+	const sampling = 0.001
+	prevGamma := 0.2
+	prevDiff := 1e10
 
-	for i := 0; i < maxIter; i++ {
-		mid := (lo + hi) / 2.0
-		val := gammaRatio(mid)
-		if math.Abs(val-rHatNorm) < tol {
-			return mid
+	for gam := 0.2; gam < 10.0; gam += sampling {
+		rGam := gammaRatio(gam)
+		diff := math.Abs(rGam - rHatNorm)
+		if diff > prevDiff {
+			break
 		}
-		// gammaRatio is monotonically increasing with alpha
-		if val < rHatNorm {
-			lo = mid // need higher alpha
-		} else {
-			hi = mid // need lower alpha
-		}
+		prevDiff = diff
+		prevGamma = gam
 	}
-	return (lo + hi) / 2.0
+
+	return prevGamma
 }
