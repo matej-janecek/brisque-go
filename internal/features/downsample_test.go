@@ -5,7 +5,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/matej/brisque-go/internal/imageutil"
+	"github.com/matej-janecek/brisque-go/internal/imageutil"
 )
 
 const tol32 = 1e-4

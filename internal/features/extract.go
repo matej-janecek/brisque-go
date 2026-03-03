@@ -5,9 +5,9 @@ import (
 	"image"
 	"math"
 
-	"github.com/matej/brisque-go/internal/conv"
-	"github.com/matej/brisque-go/internal/imageutil"
-	"github.com/matej/brisque-go/internal/stats"
+	"github.com/matej-janecek/brisque-go/internal/conv"
+	"github.com/matej-janecek/brisque-go/internal/imageutil"
+	"github.com/matej-janecek/brisque-go/internal/stats"
 )
 
 // NumFeatures is the total number of BRISQUE features (18 per scale × 2 scales).

@@ -1,7 +1,7 @@
 package brisque
 
 import (
-	"github.com/matej/brisque-go/internal/features"
+	"github.com/matej-janecek/brisque-go/internal/features"
 )
 
 // Workspace holds pre-allocated buffers for BRISQUE computation.

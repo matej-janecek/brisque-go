@@ -4,7 +4,7 @@ import (
 	"context"
 	"image"
 
-	"github.com/matej/brisque-go/internal/imageutil"
+	"github.com/matej-janecek/brisque-go/internal/imageutil"
 )
 
 // Convolve performs a separable 2D convolution of src with the given

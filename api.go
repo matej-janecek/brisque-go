@@ -7,11 +7,11 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/matej/brisque-go/internal/features"
-	"github.com/matej/brisque-go/internal/imageutil"
-	"github.com/matej/brisque-go/internal/scaler"
-	"github.com/matej/brisque-go/internal/stats"
-	"github.com/matej/brisque-go/internal/svr"
+	"github.com/matej-janecek/brisque-go/internal/features"
+	"github.com/matej-janecek/brisque-go/internal/imageutil"
+	"github.com/matej-janecek/brisque-go/internal/scaler"
+	"github.com/matej-janecek/brisque-go/internal/stats"
+	"github.com/matej-janecek/brisque-go/internal/svr"
 )
 
 // minImageDim is the minimum dimension required for BRISQUE.

@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/matej/brisque-go/internal/conv"
-	"github.com/matej/brisque-go/internal/svr"
+	"github.com/matej-janecek/brisque-go/internal/conv"
+	"github.com/matej-janecek/brisque-go/internal/svr"
 )
 
 // Model holds the BRISQUE model parameters. It is immutable and safe for

@@ -1,3 +1,3 @@
-module github.com/matej/brisque-go
+module github.com/matej-janecek/brisque-go
 
 go 1.21

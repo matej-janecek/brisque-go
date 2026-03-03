@@ -16,7 +16,7 @@ import (
 	"sync"
 	"syscall"
 
-	brisque "github.com/matej/brisque-go"
+	brisque "github.com/matej-janecek/brisque-go"
 )
 
 type result struct {

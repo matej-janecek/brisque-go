@@ -10,7 +10,7 @@ import (
 	_ "image/png"
 	"os"
 
-	brisque "github.com/matej/brisque-go"
+	brisque "github.com/matej-janecek/brisque-go"
 )
 
 func main() {

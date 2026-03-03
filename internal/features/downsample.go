@@ -3,7 +3,7 @@ package features
 import (
 	"image"
 
-	"github.com/matej/brisque-go/internal/imageutil"
+	"github.com/matej-janecek/brisque-go/internal/imageutil"
 )
 
 // cubicWeight holds the precomputed 1D bicubic interpolation weights

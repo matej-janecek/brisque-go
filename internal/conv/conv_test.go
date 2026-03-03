@@ -7,7 +7,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/matej/brisque-go/internal/imageutil"
+	"github.com/matej-janecek/brisque-go/internal/imageutil"
 )
 
 func TestMakeGaussianKernel(t *testing.T) {

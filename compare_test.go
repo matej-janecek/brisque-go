@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/matej/brisque-go/internal/features"
-	"github.com/matej/brisque-go/internal/imageutil"
+	"github.com/matej-janecek/brisque-go/internal/features"
+	"github.com/matej-janecek/brisque-go/internal/imageutil"
 )
 
 // testImage holds paths, description, and per-image tolerances.
